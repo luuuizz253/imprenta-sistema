@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Panel de la imprenta</title>
+<style>
+  body { font-family: system-ui, Arial, sans-serif; background:#f3f4f6; margin:0; padding:20px; }
+  h1 { font-size:20px; }
+  h2 { font-size:16px; margin-top:28px; }
+  table { width:100%; border-collapse:collapse; background:#fff; border-radius:8px; overflow:hidden; }
+  th, td { padding:10px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:14px; }
+  th { background:#f9fafb; }
+  .badge { padding:3px 8px; border-radius:6px; font-size:12px; font-weight:600; }
+  .b-pendiente_efectivo { background:#fef3c7; color:#92400e; }
+  .b-pendiente_pago { background:#e0e7ff; color:#3730a3; }
+  .b-aprobado { background:#d1fae5; color:#065f46; }
+  .b-impreso { background:#e5e7eb; color:#374151; }
+  button { padding:6px 12px; border:none; border-radius:6px; background:#1d4ed8; color:#fff; cursor:pointer; }
+  select, input[type=number] { margin-bottom:8px; padding:6px; }
+  .card { background:#fff; border-radius:10px; padding:16px; margin-top:10px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  .dias { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+  .dias label { font-size:13px; background:#f3f4f6; padding:4px 8px; border-radius:6px; }
+  .fila { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
+  .ok-msg { color:#065f46; font-size:13px; }
+  .oculto { display:none !important; }
+</style>
+</head>
+<body>
+<h1>📋 Panel de pedidos</h1>
+<select id="filtro">
+  <option value="">Todos</option>
+  <option value="pendiente_efectivo">Pendiente de pago en efectivo</option>
+  <option value="pendiente_pago">Pendiente de Mercado Pago</option>
+  <option value="aprobado">Aprobado (esperando imprimir)</option>
+  <option value="impreso">Impreso</option>
+</select>
+<table>
+  <thead>
+    <tr><th>Cliente</th><th>Archivo</th><th>Detalle</th><th>Precio</th><th>Estado</th><th></th></tr>
+  </thead>
+  <tbody id="tbody"></tbody>
+</table>
+
+<h2>⏰ Horario de atención</h2>
+<div class="card">
+  <label><input type="checkbox" id="genActivo"> Activar restricción de horario general</label>
+  <div class="dias" id="genDias"></div>
+  <div class="fila">
+    <span>Desde</span> <input type="number" id="genInicio" min="0" max="23" style="width:60px">
+    <span>hasta</span> <input type="number" id="genFin" min="0" max="23" style="width:60px">
+    <span>hs</span>
+  </div>
+
+  <h2 style="margin-top:16px;">🏷️ Horario para papel adhesivo (impresora L380)</h2>
+  <label><input type="checkbox" id="adhActivo"> Activar restricción específica para adhesivo</label>
+  <div class="dias" id="adhDias"></div>
+  <div class="fila">
+    <span>Desde</span> <input type="number" id="adhInicio" min="0" max="23" style="width:60px">
+    <span>hasta</span> <input type="number" id="adhFin" min="0" max="23" style="width:60px">
+    <span>hs</span>
+  </div>
+
+  <button id="btnGuardarHorario">Guardar horarios</button>
+  <p class="ok-msg oculto" id="okHorario">✅ Guardado</p>
+</div>
+
+<script>
+const API_URL = "https://imprenta-backend-kair.onrender.com";
+const el = id => document.getElementById(id);
+const DIAS = [{n:1,l:"Lun"},{n:2,l:"Mar"},{n:3,l:"Mié"},{n:4,l:"Jue"},{n:5,l:"Vie"},{n:6,l:"Sáb"},{n:7,l:"Dom"}];
+
+async function cargar() {
+  const estado = el("filtro").value;
+  const url = estado ? `${API_URL}/api/orders?estado=${estado}` : `${API_URL}/api/orders`;
+  const res = await fetch(url);
+  const pedidos = await res.json();
+  el("tbody").innerHTML = pedidos.map(p => `
+    <tr>
+      <td>${p.nombre_cliente || "-"}<br><small>${p.telefono_cliente || ""}</small></td>
+      <td>${p.archivo_original}</td>
+      <td>${p.tipo_papel === "foto" ? "Foto " + p.tamano_foto + " (" + p.orientacion + ")" : (p.tipo_papel === "adhesivo" ? "Adhesivo" : "Común " + p.tamano_papel + " · " + p.paginas + " pág.")}
+          ${p.color ? "· Color" : "· B/N"} · ${p.copias} copia(s)
+          ${p.doble_faz ? "· Doble faz" : ""} · ${p.impresora_destino}</td>
+      <td>$${p.precio_total.toLocaleString("es-AR")}</td>
+      <td><span class="badge b-${p.estado}">${p.estado}</span></td>
+      <td>${p.estado === "pendiente_efectivo" ? `<button onclick="aprobar('${p.id}')">Confirmar pago</button>` : ""}</td>
+    </tr>
+  `).join("");
+}
+
+async function aprobar(id) {
+  await fetch(`${API_URL}/api/orders/${id}/aprobar`, { method: "POST" });
+  cargar();
+}
+
+el("filtro").addEventListener("change", cargar);
+cargar();
+setInterval(cargar, 10000);
+
+// --- Horarios ---
+function pintarDias(contenedorId, prefijo) {
+  el(contenedorId).innerHTML = DIAS.map(d => `
+    <label><input type="checkbox" class="dia-${prefijo}" value="${d.n}"> ${d.l}</label>
+  `).join("");
+}
+pintarDias("genDias", "gen");
+pintarDias("adhDias", "adh");
+
+async function cargarHorarios() {
+  const res = await fetch(`${API_URL}/api/settings/horarios`);
+  const data = await res.json();
+
+  el("genActivo").checked = data.general.activo;
+  el("genInicio").value = data.general.horaInicio;
+  el("genFin").value = data.general.horaFin;
+  document.querySelectorAll(".dia-gen").forEach(cb => cb.checked = data.general.dias.includes(Number(cb.value)));
+
+  el("adhActivo").checked = data.adhesivo.activo;
+  el("adhInicio").value = data.adhesivo.horaInicio;
+  el("adhFin").value = data.adhesivo.horaFin;
+  document.querySelectorAll(".dia-adh").forEach(cb => cb.checked = data.adhesivo.dias.includes(Number(cb.value)));
+}
+cargarHorarios();
+
+el("btnGuardarHorario").addEventListener("click", async () => {
+  const general = {
+    activo: el("genActivo").checked,
+    dias: [...document.querySelectorAll(".dia-gen:checked")].map(cb => Number(cb.value)),
+    horaInicio: parseInt(el("genInicio").value, 10) || 0,
+    horaFin: parseInt(el("genFin").value, 10) || 23,
+  };
+  const adhesivo = {
+    activo: el("adhActivo").checked,
+    dias: [...document.querySelectorAll(".dia-adh:checked")].map(cb => Number(cb.value)),
+    horaInicio: parseInt(el("adhInicio").value, 10) || 0,
+    horaFin: parseInt(el("adhFin").value, 10) || 23,
+  };
+
+  await fetch(`${API_URL}/api/settings/horarios`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ general, adhesivo }),
+  });
+  el("okHorario").classList.remove("oculto");
+  setTimeout(() => el("okHorario").classList.add("oculto"), 2500);
+});
+</script>
+</body>
+</html>
